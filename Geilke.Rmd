@@ -1,0 +1,118 @@
+---
+title: "Unit dashboard"
+author: 
+output:
+  html_document:
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup,include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE,error=FALSE,cache=TRUE,fig.align = 'center')
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(xlsx)
+library(tidyverse)
+library(lubridate)
+library(forcats)
+library(RColorBrewer)
+theme_set(theme_light())
+
+reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
+  new_x <- paste(x, within, sep = sep)
+  stats::reorder(new_x, by, FUN = fun)
+}
+
+scale_x_reordered <- function(..., sep = "___") {
+  reg <- paste0(sep, ".+$")
+  ggplot2::scale_x_discrete(labels = function(x) gsub(reg, "", x), ...)
+}
+```
+
+```{r - Cleaning & modifying data}
+urlopy <- read.xlsx("urlopy.xls",sheetIndex = 1,header=TRUE,encoding = c("UTF-8","latin1","bytes")) %>% 
+  select(Employee:Days..Left) %>% 
+  as_tibble()
+
+urlopy_noloa <- read.xlsx("urlopy noloa.xls",sheetIndex = 1,encoding = c("UTF-8","latin1","bytes")) %>% 
+  select(Employee:Days..Left) %>% 
+  as_tibble()
+
+urlopy$type[!(urlopy$Employee %in% urlopy_noloa$Employee)] <- "Loa"
+urlopy$type[(urlopy$Employee %in% urlopy_noloa$Employee)] <- "Regular"
+
+urlopy <- urlopy %>% group_by(FLM) %>% mutate(Index=group_indices()) %>% ungroup()
+
+urlopy_snapshot <- read.xlsx("urlopy snapshot 2019.xls",sheetIndex=1,header=TRUE,encoding = c("UTF-8","latin1","bytes")) %>% 
+  as_tibble()
+```
+
+# Xprimer
+
+```{r}
+install.packages("bdscale")
+library(bdscale)
+# Average vacations days left per month
+
+urlopy_snapshot %>% 
+  mutate(Date=floor_date(Date,"month")) %>% 
+  group_by(Date) %>% 
+  summarise(avg_days=mean(Days..Left)) %>% 
+  ungroup() %>% 
+  ggplot(aes(Date,avg_days))+
+  geom_col(color="black",fill="blue",alpha=0.4)+
+  geom_text(aes(label=round(avg_days,0)),position=position_stack(vjust=0.5))+
+  labs(title="Average vacation days left per month",y="Average days",x="")+
+  scale_x_date(date_breaks = "1 month",date_labels = "%m/%Y")+
+  theme_light()+
+  theme(axis.text.x = element_text(angle=90))
+
+```
+
+
+```{r}
+
+# Average vacations days left per FLM
+
+urlopy %>% 
+  group_by(FLM) %>% 
+  summarise(avg_days=mean(Days..Left)) %>% 
+  ungroup() %>% 
+  mutate(FLM=fct_reorder(FLM,avg_days)) %>% 
+  ggplot(aes(FLM,avg_days,fill=FLM))+
+  geom_col(color="black",alpha=0.6)+
+  geom_text(aes(label=round(avg_days,0)),position=position_stack(vjust=0.5))+
+  #scale_fill_brewer(palette = "RdYlBu")+
+  labs(title="Average vacation days left per FLM",y="Average days")+
+  theme_light()+
+  theme(legend.position="none")+
+  coord_flip()
+
+```
+
+```{r}
+
+for (i in 1:max(urlopy$Index)) {
+  value <- urlopy %>% 
+    filter(Index==i) %>% 
+    mutate(Employee=fct_reorder(Employee,Days..Left)) %>% 
+    ggplot(aes(Employee,Days..Left))+
+    geom_col(aes(fill=type),color="black")+
+    labs(title=paste0(urlopy$FLM[urlopy$Index==i]),
+         y="Days left")+
+    coord_flip()+
+    theme_light()+
+    theme(legend.position = "bottom")
+  print(value)
+}
+```
+
+# Claiming
+
+
