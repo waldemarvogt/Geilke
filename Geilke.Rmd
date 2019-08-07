@@ -18,10 +18,17 @@ knitr::opts_chunk$set(echo = FALSE,warning=FALSE,error=FALSE,cache=TRUE,fig.alig
 
 ```{r, message=FALSE, warning=FALSE}
 library(xlsx)
+library(readxl)
 library(tidyverse)
+library(scales)
+library(janitor)
 library(lubridate)
 library(forcats)
 library(RColorBrewer)
+library(stringr)
+library(ggrepel)
+library(gridExtra)
+library(ggsci)
 theme_set(theme_light())
 
 reorder_within <- function(x, by, within, fun = mean, sep = "___", ...) {
@@ -36,6 +43,9 @@ scale_x_reordered <- function(..., sep = "___") {
 ```
 
 ```{r - Cleaning & modifying data}
+
+# XPRIMER
+
 urlopy <- read.xlsx("urlopy.xls",sheetIndex = 1,header=TRUE,encoding = c("UTF-8","latin1","bytes")) %>% 
   select(Employee:Days..Left) %>% 
   as_tibble()
@@ -51,28 +61,112 @@ urlopy <- urlopy %>% group_by(FLM) %>% mutate(Index=group_indices()) %>% ungroup
 
 urlopy_snapshot <- read.xlsx("urlopy snapshot 2019.xls",sheetIndex=1,header=TRUE,encoding = c("UTF-8","latin1","bytes")) %>% 
   as_tibble()
+
+# CLAIMING
+
+claimcodes <- read.xlsx("claimcodes 2019.xls",sheetIndex = 3,header=TRUE,encoding = c("UTF-8","latin1","bytes")) %>% 
+  as_tibble() %>% 
+  clean_names()
+
+claimcodes_snapshot <- read.xlsx("claimcodes snapshot 2019.xls",sheetIndex = 3,header=TRUE,encoding = c("UTF-8","latin1","bytes")) %>% 
+  as_tibble() %>% 
+  clean_names() %>% 
+  gather(key="Month",value="Percentage",-manager,-account_customer) %>% 
+  mutate(Month=toupper(str_replace(Month,".*_","")))
+  
+  
+#names(claimcodes_snapshot) <- names(claimcodes_snapshot) %>% 
+#  str_replace(".*_","") %>% 
+#  toupper()
+
+months_total <- c("JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER")
+
+claims_total <- claimcodes_snapshot %>% 
+  filter(Month %in% months_total)
+
+
+# UTILIZATION
+
+utilization <- read_excel("utilization new.xls",sheet=1) %>% 
+  as_tibble() %>% 
+  clean_names() %>% 
+  mutate(month=as.Date(month))
+
+utilization_gathered <- utilization %>% 
+  filter(manager != "Total") %>% 
+  select(month,contains("total")) %>% 
+  select(-total_claimed_hours,-billable_hours_percent_of_total) %>% 
+  gather(key="negative_factors",value="value",overtime_percent_of_total:other_percent_of_total)
+  
 ```
 
 # Xprimer
 
 ```{r}
-install.packages("bdscale")
-library(bdscale)
+
 # Average vacations days left per month
 
 urlopy_snapshot %>% 
-  mutate(Date=floor_date(Date,"month")) %>% 
+  #mutate(Date=floor_date(Date,"month")) %>% 
   group_by(Date) %>% 
   summarise(avg_days=mean(Days..Left)) %>% 
   ungroup() %>% 
+  mutate(Date=as.factor(Date)) %>% # to hide bars with no value
   ggplot(aes(Date,avg_days))+
-  geom_col(color="black",fill="blue",alpha=0.4)+
+  geom_col(color="black",fill="blue",alpha=0.4,na.rm = TRUE)+
   geom_text(aes(label=round(avg_days,0)),position=position_stack(vjust=0.5))+
   labs(title="Average vacation days left per month",y="Average days",x="")+
-  scale_x_date(date_breaks = "1 month",date_labels = "%m/%Y")+
+  #scale_x_date(date_breaks = "1 week",date_labels = "%m/%Y")+
   theme_light()+
   theme(axis.text.x = element_text(angle=90))
 
+```
+
+```{r,include=FALSE}
+
+# chunk excluded
+
+urlopy_snapshot %>% 
+  group_by(Date,FLM) %>% 
+  summarise(avg_days=mean(Days..Left)) %>% 
+  ungroup() %>% 
+  mutate(label=if_else(Date==max(Date),as.character(FLM),NA_character_),
+         Date=as.factor(Date)) %>% 
+  ggplot(aes(Date,avg_days,group=FLM))+
+  geom_line(aes(color=FLM),size=1)+
+  geom_label_repel(aes(label = label,color=FLM),
+    size=2,
+    nudge_y = -0.5,
+    nudge_x = 0.5,
+    direction = "y",
+    hjust = 0.5,
+    segment.size = 0.2)+
+  labs()
+  theme_light()+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=90))
+```
+
+```{r}
+urlopy_snapshot %>% 
+  group_by(Date,FLM) %>% 
+  summarise(avg_days=mean(Days..Left)) %>% 
+  ungroup() %>% 
+  mutate(label=if_else(Date==max(Date),as.character(FLM),NA_character_),
+         Date=as.factor(Date)) %>%
+  ggplot(aes(Date,avg_days,group=FLM))+
+  geom_line(aes(color=FLM),size=1)+
+  geom_text_repel(aes(label=label,color=FLM),
+    size=2.3,
+    nudge_y = -0.7,
+    nudge_x = 0.7,
+    direction = "y",
+    hjust = 0.7,
+    segment.size = 0.2)+
+  labs(title="Average vacation days left per FLM",y="Average days")+
+  theme_light()+
+  theme(legend.position="none",
+        axis.text.x = element_text(angle=90))
 ```
 
 
@@ -80,20 +174,42 @@ urlopy_snapshot %>%
 
 # Average vacations days left per FLM
 
-urlopy %>% 
+p1 <- urlopy %>% 
   group_by(FLM) %>% 
   summarise(avg_days=mean(Days..Left)) %>% 
   ungroup() %>% 
   mutate(FLM=fct_reorder(FLM,avg_days)) %>% 
   ggplot(aes(FLM,avg_days,fill=FLM))+
   geom_col(color="black",alpha=0.6)+
-  geom_text(aes(label=round(avg_days,0)),position=position_stack(vjust=0.5))+
+  geom_text(aes(label=round(avg_days,1)),position=position_stack(vjust=0.5))+
   #scale_fill_brewer(palette = "RdYlBu")+
-  labs(title="Average vacation days left per FLM",y="Average days")+
+  labs(title="Average vacation days left \n per FLM",y="Average days")+
   theme_light()+
   theme(legend.position="none")+
   coord_flip()
 
+```
+
+```{r}
+p2 <- urlopy %>% 
+  filter(type=="Regular") %>% 
+  group_by(FLM) %>% 
+  summarise(avg_days=mean(Days..Left)) %>% 
+  ungroup() %>% 
+  mutate(FLM=fct_reorder(FLM,avg_days)) %>% 
+  ggplot(aes(FLM,avg_days,fill=FLM))+
+  geom_col(color="black",alpha=0.6)+
+  geom_text(aes(label=round(avg_days,1)),position=position_stack(vjust=0.5))+
+  #scale_fill_brewer(palette = "RdYlBu")+
+  labs(title="Average vacation days left \n per FLM w/o LoA",y="Average days")+
+  theme_light()+
+  theme(legend.position="none")+
+  coord_flip()
+
+```
+
+```{r}
+grid.arrange(p1,p2,ncol=2)
 ```
 
 ```{r}
@@ -104,6 +220,7 @@ for (i in 1:max(urlopy$Index)) {
     mutate(Employee=fct_reorder(Employee,Days..Left)) %>% 
     ggplot(aes(Employee,Days..Left))+
     geom_col(aes(fill=type),color="black")+
+    scale_fill_manual(values=c("Loa"="lightgreen","Regular"="lightblue"))+
     labs(title=paste0(urlopy$FLM[urlopy$Index==i]),
          y="Days left")+
     coord_flip()+
@@ -116,9 +233,92 @@ for (i in 1:max(urlopy$Index)) {
 # Claiming
 
 ```{r}
+claims_total %>% 
+  group_by(Month,account_customer) %>% 
+  summarise(sum_per=sum(Percentage)) %>% 
+  ungroup() %>% 
+  ggplot(aes(Month,sum_per))+
+  geom_col(aes(fill=account_customer),color="black")+
+  geom_text(aes(label=round(sum_per,2)),position = position_stack(vjust = 0.5))+
+  scale_fill_discrete(name="Account/Customer")+
+  scale_y_continuous(labels = scales::percent_format())+
+  labs(title="Monthly comparison IBM Internal vs. Customers",y="Volume")+
+  coord_flip()+
+  theme_light()+
+  theme(legend.position = "bottom")
+```
 
+```{r}
+claimcodes %>% 
+  count(account_customer,sort=T) %>% 
+  arrange(desc(n)) %>% 
+  top_n(20,n) %>% 
+  mutate(account_customer=fct_reorder(account_customer,n)) %>% 
+  ggplot(aes(account_customer,n))+
+  geom_col(aes(fill=account_customer),color="black")+
+  coord_flip()+
+  geom_text(aes(label=n),position = position_stack(vjust=0.5),size=3)+
+  scale_x_discrete(label=function(x) str_wrap(x,20))+
+  #scale_x_discrete(label=function(x) abbreviate(x, minlength=15))+   # skraca tekst do 15 znaków
+  labs(title="Claim codes",x="",y="Volume")+
+  theme_light()+
+  theme(axis.text.y=element_text(size=7),legend.position="")
 
 ```
 
+# Utilization
 
+```{r,fig.height=9,fig.width=9}
+utilization %>% 
+  filter(manager != "Total") %>% 
+  group_by(manager,month) %>% 
+  summarise(avg_ur_monthly=mean(ur_weekly)) %>% 
+  ungroup() %>% 
+  ggplot(aes(month,avg_ur_monthly))+
+  geom_col(aes(fill=manager))+
+  geom_hline(yintercept=0.9)+
+  facet_wrap(~manager,ncol = 4)+
+  scale_y_continuous(labels=percent_format())+
+  scale_x_date(date_breaks = "3 month",date_labels = "%m/%Y")+
+  labs(title="Utilization trend over months",y="",x="")+
+  theme_light()+
+  theme(legend.position = "blank",
+        axis.text.x = element_text(angle = 90))
+  
+
+```
+
+```{r}
+utilization %>% 
+  filter(manager=="Total") %>%  
+  ggplot(aes(month,ur_weekly))+
+  geom_col(fill="lightblue",color="black")+
+  geom_text(aes(label=round(100*ur_weekly,2)),position=position_stack(vjust=0.5),size=2.5,check_overlap = T)+
+  geom_hline(yintercept = 0.9)+
+  scale_y_continuous(labels=percent_format(),limits=c(0,1),breaks=seq(0,1,0.1))+
+  scale_x_date(date_breaks = "1 month",date_labels = "%m/%Y")+
+  labs(title="Utilization rate detailed over year",x="",y="")+
+  theme_light()+
+  theme(axis.text.x=element_text(angle=90))
+
+  
+```
+
+```{r,fig.height=9,fig.width=9}
+
+utilization_gathered %>% 
+  group_by(month,negative_factors) %>% 
+  summarise(avg_value=mean(value)) %>% 
+  ggplot(aes(month,avg_value))+
+  geom_line(aes(group=negative_factors,color=negative_factors),size=1)+
+  scale_x_date(date_breaks = "3 month",date_labels = "%m/%Y")+
+  scale_y_continuous(labels=percent_format())+
+  labs(color="Negative factors",
+       title="Negative factors influencing utilization rate",x="",y="")+
+  theme_light()+
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))+
+  guides(colour = guide_legend(nrow = 5))
+
+```
 
